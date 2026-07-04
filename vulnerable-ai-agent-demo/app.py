@@ -105,6 +105,99 @@ def require_auth(f):
     return wrapper
 
 
+INDEX_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DataBot — AI Customer Support Agent</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --accent:#38bdf8; --user:#2563eb; --bot:#334155; --text:#e2e8f0; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column; }
+  header { padding:14px 20px; background:var(--panel); border-bottom:1px solid #334155; display:flex; align-items:center; gap:10px; }
+  header .dot { width:10px; height:10px; border-radius:50%; background:#22c55e; box-shadow:0 0 8px #22c55e; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  header small { color:#94a3b8; margin-left:auto; }
+  #login { padding:16px 20px; background:var(--panel); border-bottom:1px solid #334155; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  #login input { background:#0f172a; border:1px solid #334155; color:var(--text); padding:8px 10px; border-radius:8px; }
+  #login button, #composer button { background:var(--accent); color:#04283a; border:none; padding:8px 16px; border-radius:8px; font-weight:600; cursor:pointer; }
+  #login .status { color:#94a3b8; font-size:13px; }
+  #chat { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:12px; }
+  .msg { max-width:75%; padding:10px 14px; border-radius:14px; line-height:1.45; white-space:pre-wrap; word-break:break-word; }
+  .msg.user { align-self:flex-end; background:var(--user); border-bottom-right-radius:4px; }
+  .msg.bot { align-self:flex-start; background:var(--bot); border-bottom-left-radius:4px; }
+  .msg.bot pre { margin:8px 0 0; background:#0f172a; padding:10px; border-radius:8px; overflow-x:auto; font-size:12px; }
+  #composer { display:flex; gap:8px; padding:14px 20px; background:var(--panel); border-top:1px solid #334155; }
+  #composer input { flex:1; background:#0f172a; border:1px solid #334155; color:var(--text); padding:11px 14px; border-radius:10px; font-size:14px; }
+</style>
+</head>
+<body>
+  <header>
+    <span class="dot"></span>
+    <h1>DataBot — AI Customer Support Agent</h1>
+    <small>databot.tfan.au</small>
+  </header>
+  <div id="login">
+    <input id="user" placeholder="username" value="alice" autocomplete="off">
+    <input id="pass" type="password" placeholder="password" value="password123">
+    <button onclick="login()">Sign in</button>
+    <span class="status" id="loginStatus">Demo users: alice / password123, bob / hunter2</span>
+  </div>
+  <div id="chat"></div>
+  <div id="composer">
+    <input id="input" placeholder="Ask DataBot about your account…" onkeydown="if(event.key==='Enter')send()">
+    <button onclick="send()">Send</button>
+  </div>
+<script>
+  let token = null;
+  const chat = document.getElementById('chat');
+
+  function bubble(text, who, obj) {
+    const d = document.createElement('div');
+    d.className = 'msg ' + who;
+    d.textContent = text;
+    if (obj) { const p = document.createElement('pre'); p.textContent = JSON.stringify(obj, null, 2); d.appendChild(p); }
+    chat.appendChild(d);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  async function login() {
+    const username = document.getElementById('user').value;
+    const password = document.getElementById('pass').value;
+    const s = document.getElementById('loginStatus');
+    try {
+      const r = await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username, password})});
+      const j = await r.json();
+      if (r.ok) { token = j.token; s.textContent = 'Signed in as ' + username; bubble('Hi! I\\'m DataBot. How can I help with your account today?', 'bot'); }
+      else { s.textContent = 'Login failed: ' + (j.error || r.status); }
+    } catch (e) { s.textContent = 'Login error: ' + e; }
+  }
+
+  async function send() {
+    const inp = document.getElementById('input');
+    const message = inp.value.trim();
+    if (!message) return;
+    if (!token) { bubble('Please sign in first.', 'bot'); return; }
+    bubble(message, 'user');
+    inp.value = '';
+    try {
+      const r = await fetch('/api/agent/chat', {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body: JSON.stringify({message})});
+      const j = await r.json();
+      bubble(j.reply || j.error || '(no reply)', 'bot', j.tool_result || j.account || null);
+    } catch (e) { bubble('Error: ' + e, 'bot'); }
+  }
+</script>
+</body>
+</html>
+"""
+
+
+@app.get("/")
+def index():
+    return INDEX_HTML
+
+
 @app.get("/health")
 def health():
     return jsonify({"status": "ok"})
