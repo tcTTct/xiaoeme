@@ -1,0 +1,28 @@
+# Requires an nginx-ingress controller (ingressClassName: nginx) and cert-manager
+# with a ClusterIssuer named "letsencrypt-prod" already installed in the cluster.
+# Check with: kubectl get ingressclass; kubectl get clusterissuer
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vulnerable-ai-agent-demo
+  namespace: ai-agent-demo
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - databot.tfan.au
+      secretName: databot-tfan-au-tls
+  rules:
+    - host: databot.tfan.au
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: vulnerable-ai-agent-demo
+                port:
+                  number: 80

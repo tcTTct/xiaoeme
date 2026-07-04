@@ -1,0 +1,86 @@
+name: Build, Scan, Push, Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "vulnerable-ai-agent-demo/**"
+      - ".github/workflows/build-scan-push-deploy.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: registry.tfan.au/vulnerable-ai-agent-demo
+  APP_DIR: vulnerable-ai-agent-demo
+  K8S_NAMESPACE: ai-agent-demo
+
+jobs:
+  build-scan-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.vars.outputs.tag }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: vars
+        run: echo "tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        run: docker build -t "$IMAGE:${{ steps.vars.outputs.tag }}" -t "$IMAGE:latest" "$APP_DIR"
+
+      - name: Download Wiz CLI
+        run: curl -Lo wizcli https://downloads.wiz.io/v1/wizcli/latest/wizcli-linux-amd64 && chmod +x wizcli
+
+      - name: Wiz CLI image scan
+        env:
+          WIZ_CLIENT_ID: ${{ secrets.WIZ_CLIENT_ID }}
+          WIZ_CLIENT_SECRET: ${{ secrets.WIZ_CLIENT_SECRET }}
+        run: ./wizcli scan container-image "$IMAGE:${{ steps.vars.outputs.tag }}" --policies "Default vulnerabilities policy"
+
+      - name: Log in to registry.tfan.au
+        uses: docker/login-action@v3
+        with:
+          registry: registry.tfan.au
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Push image
+        run: |
+          docker push "$IMAGE:${{ steps.vars.outputs.tag }}"
+          docker push "$IMAGE:latest"
+
+  deploy:
+    needs: build-scan-push
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.build-scan-push.outputs.image_tag }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "$HOME/.kube/config"
+
+      - name: Apply namespace and base manifests
+        run: |
+          kubectl apply -f "$APP_DIR/k8s/namespace.yaml"
+          kubectl -n "$K8S_NAMESPACE" create secret generic vulnerable-ai-agent-demo-secret \
+            --from-literal=jwt-secret="${{ secrets.APP_JWT_SECRET }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f "$APP_DIR/k8s/deployment.yaml"
+          kubectl apply -f "$APP_DIR/k8s/service.yaml"
+          kubectl apply -f "$APP_DIR/k8s/ingress.yaml"
+
+      - name: Roll out the freshly built image
+        run: |
+          kubectl -n "$K8S_NAMESPACE" set image deployment/vulnerable-ai-agent-demo "app=$IMAGE:$TAG"
+          kubectl -n "$K8S_NAMESPACE" rollout status deployment/vulnerable-ai-agent-demo --timeout=120s

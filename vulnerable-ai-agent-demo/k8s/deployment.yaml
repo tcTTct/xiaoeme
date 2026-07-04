@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vulnerable-ai-agent-demo
+  namespace: ai-agent-demo
+  labels:
+    app: vulnerable-ai-agent-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vulnerable-ai-agent-demo
+  template:
+    metadata:
+      labels:
+        app: vulnerable-ai-agent-demo
+    spec:
+      containers:
+        - name: app
+          # CI overwrites this to registry.tfan.au/vulnerable-ai-agent-demo:<sha> via `kubectl set image`
+          image: registry.tfan.au/vulnerable-ai-agent-demo:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: vulnerable-ai-agent-demo-secret
+                  key: jwt-secret
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
