@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: vulnerable-ai-agent-demo
-  namespace: ai-agent-demo
+  namespace: xiaoeme
   labels:
     app: vulnerable-ai-agent-demo
 spec:

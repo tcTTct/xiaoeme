@@ -14,7 +14,7 @@ permissions:
 env:
   IMAGE: registry.tfan.au/vulnerable-ai-agent-demo
   APP_DIR: vulnerable-ai-agent-demo
-  K8S_NAMESPACE: ai-agent-demo
+  K8S_NAMESPACE: xiaoeme
 
 jobs:
   build-scan-push:
@@ -70,9 +70,10 @@ jobs:
           mkdir -p "$HOME/.kube"
           echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "$HOME/.kube/config"
 
-      - name: Apply namespace and base manifests
+      - name: Apply base manifests
         run: |
-          kubectl apply -f "$APP_DIR/k8s/namespace.yaml"
+          # Namespace is created out-of-band (see k8s/namespace.yaml for reference);
+          # the CI service account is scoped to it and can't manage cluster-scoped resources.
           kubectl -n "$K8S_NAMESPACE" create secret generic vulnerable-ai-agent-demo-secret \
             --from-literal=jwt-secret="${{ secrets.APP_JWT_SECRET }}" \
             --dry-run=client -o yaml | kubectl apply -f -
