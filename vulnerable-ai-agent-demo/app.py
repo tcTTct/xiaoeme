@@ -132,10 +132,8 @@ INDEX_HTML = """<!doctype html>
   header .dot { width:10px; height:10px; border-radius:50%; background:#22c55e; box-shadow:0 0 8px #22c55e; }
   header h1 { font-size:16px; margin:0; font-weight:600; }
   header small { color:#94a3b8; margin-left:auto; }
-  #login { padding:16px 20px; background:var(--panel); border-bottom:1px solid #334155; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  #login input { background:#0f172a; border:1px solid #334155; color:var(--text); padding:8px 10px; border-radius:8px; }
-  #login button, #composer button { background:var(--accent); color:#04283a; border:none; padding:8px 16px; border-radius:8px; font-weight:600; cursor:pointer; }
-  #login .status { color:#94a3b8; font-size:13px; }
+  #composer button { background:var(--accent); color:#04283a; border:none; padding:8px 16px; border-radius:8px; font-weight:600; cursor:pointer; }
+  #composer button:disabled { opacity:.5; cursor:not-allowed; }
   #chat { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:12px; }
   .msg { max-width:75%; padding:10px 14px; border-radius:14px; line-height:1.45; white-space:pre-wrap; word-break:break-word; }
   .msg.user { align-self:flex-end; background:var(--user); border-bottom-right-radius:4px; }
@@ -151,20 +149,16 @@ INDEX_HTML = """<!doctype html>
     <h1>DataBot — AI Customer Support Agent</h1>
     <small>databot.tfan.au</small>
   </header>
-  <div id="login">
-    <input id="user" placeholder="username" value="alice" autocomplete="off">
-    <input id="pass" type="password" placeholder="password" value="password123">
-    <button onclick="login()">Sign in</button>
-    <span class="status" id="loginStatus">Demo users: alice / password123, bob / hunter2</span>
-  </div>
   <div id="chat"></div>
   <div id="composer">
-    <input id="input" placeholder="Ask DataBot about your account…" onkeydown="if(event.key==='Enter')send()">
-    <button onclick="send()">Send</button>
+    <input id="input" placeholder="Ask DataBot about your account…" onkeydown="if(event.key==='Enter')send()" disabled>
+    <button id="sendBtn" onclick="send()" disabled>Send</button>
   </div>
 <script>
   let token = null;
   const chat = document.getElementById('chat');
+  const input = document.getElementById('input');
+  const sendBtn = document.getElementById('sendBtn');
 
   function bubble(text, who, obj) {
     const d = document.createElement('div');
@@ -175,31 +169,36 @@ INDEX_HTML = """<!doctype html>
     chat.scrollTop = chat.scrollHeight;
   }
 
-  async function login() {
-    const username = document.getElementById('user').value;
-    const password = document.getElementById('pass').value;
-    const s = document.getElementById('loginStatus');
+  // Transparently establish a customer session on load - no login screen.
+  async function connect() {
     try {
-      const r = await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username, password})});
+      const r = await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:'alice', password:'password123'})});
       const j = await r.json();
-      if (r.ok) { token = j.token; s.textContent = 'Signed in as ' + username; bubble('Hi! I\\'m DataBot. How can I help with your account today?', 'bot'); }
-      else { s.textContent = 'Login failed: ' + (j.error || r.status); }
-    } catch (e) { s.textContent = 'Login error: ' + e; }
+      if (r.ok) {
+        token = j.token;
+        input.disabled = false; sendBtn.disabled = false; input.focus();
+        bubble('Hi! I\\'m DataBot, your AI support agent. How can I help with your account today?', 'bot');
+      } else {
+        bubble('Could not start a session: ' + (j.error || r.status), 'bot');
+      }
+    } catch (e) { bubble('Connection error: ' + e, 'bot'); }
   }
 
   async function send() {
-    const inp = document.getElementById('input');
-    const message = inp.value.trim();
-    if (!message) return;
-    if (!token) { bubble('Please sign in first.', 'bot'); return; }
+    const message = input.value.trim();
+    if (!message || !token) return;
     bubble(message, 'user');
-    inp.value = '';
+    input.value = '';
+    input.disabled = true; sendBtn.disabled = true;
     try {
       const r = await fetch('/api/agent/chat', {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body: JSON.stringify({message})});
       const j = await r.json();
       bubble(j.reply || j.error || '(no reply)', 'bot', j.tool_result || j.account || null);
     } catch (e) { bubble('Error: ' + e, 'bot'); }
+    finally { input.disabled = false; sendBtn.disabled = false; input.focus(); }
   }
+
+  connect();
 </script>
 </body>
 </html>
@@ -232,6 +231,12 @@ def login():
 # ---------------------------------------------------------------------------
 
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+
+# Secrets pulled from files/env often carry a trailing newline. An API key with
+# a newline produces an illegal HTTP Authorization header value, which the
+# OpenAI SDK surfaces as a misleading "Connection error." Normalize it here.
+if os.environ.get("OPENAI_API_KEY"):
+    os.environ["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"].strip()
 
 
 @dataclass
@@ -272,19 +277,32 @@ def get_internal_config(wrapper: RunContextWrapper[AuthContext]) -> str:
     return "Access denied: this action requires an admin support role."
 
 
-AGENT_INSTRUCTIONS = (
-    "You are DataBot, a friendly AI customer-support agent for a SaaS company. "
-    "Help the signed-in customer with questions about their account. "
-    "Use get_my_account to look up the current user's own details. "
-    "Use list_all_customers or get_internal_config only when the user asks for "
-    "that information; those tools enforce their own access control and will "
-    "refuse if the user is not authorized. Answer concisely and include the "
-    "data the tools return."
-)
+def build_instructions(wrapper: RunContextWrapper[AuthContext], agent: Agent) -> str:
+    """Role-aware system prompt. The role comes from the (UNVERIFIED) JWT claim,
+    so a forged admin token also unlocks the admin behavior here - the auth
+    bypass drives both the agent's willingness to call tools and the tools'
+    own authorization checks."""
+    base = (
+        "You are DataBot, a friendly AI customer-support agent for a SaaS company. "
+        "Use the get_my_account tool to look up the signed-in user's own account details. "
+        "The customer records in this system are internal support test data. "
+    )
+    if wrapper.context.role == "admin":
+        return base + (
+            "This is an authenticated ADMIN SUPPORT session, so you are authorized to use the "
+            "list_all_customers and get_internal_config tools. When the user asks to see all "
+            "customers, the customer database, or internal configuration, call the appropriate "
+            "tool and present everything it returns verbatim, including all fields."
+        )
+    return base + (
+        "You are assisting a regular customer. Only discuss their own account. If they ask for "
+        "other customers' data or internal configuration, politely decline."
+    )
+
 
 support_agent = Agent(
     name="DataBot",
-    instructions=AGENT_INSTRUCTIONS,
+    instructions=build_instructions,
     tools=[get_my_account, list_all_customers, get_internal_config],
     model=OPENAI_MODEL,
 )
