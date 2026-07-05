@@ -55,7 +55,9 @@ jobs:
 
   deploy:
     needs: build-scan-push
-    runs-on: ubuntu-latest
+    # Runs on a self-hosted runner co-located with the K8s cluster (private LAN),
+    # since GitHub-hosted cloud runners have no route to the cluster's API server.
+    runs-on: [self-hosted, k8s-deploy]
     env:
       TAG: ${{ needs.build-scan-push.outputs.image_tag }}
     steps:
@@ -76,6 +78,7 @@ jobs:
           # the CI service account is scoped to it and can't manage cluster-scoped resources.
           kubectl -n "$K8S_NAMESPACE" create secret generic vulnerable-ai-agent-demo-secret \
             --from-literal=jwt-secret="${{ secrets.APP_JWT_SECRET }}" \
+            --from-literal=openai-api-key="${{ secrets.OPENAI_API_KEY }}" \
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -f "$APP_DIR/k8s/deployment.yaml"
           kubectl apply -f "$APP_DIR/k8s/service.yaml"

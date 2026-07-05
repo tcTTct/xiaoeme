@@ -4,24 +4,37 @@ INTENTIONALLY VULNERABLE DEMO APPLICATION
 Purpose: security-testing / detection-validation target only.
 Do NOT deploy this to a real network or use real data.
 
-Simulated "AI customer support agent" service with a deliberately
-planted authentication-bypass vulnerability (CWE-287 / CWE-345:
-Improper Authentication / Insufficient Verification of Data Authenticity)
-that leads to sensitive data exposure (maps to OWASP LLM Top 10 -
-LLM06:2025 Excessive Agency / Sensitive Information Disclosure).
+A real LLM "AI customer support agent" (built on the OpenAI Agents SDK)
+with a deliberately planted authentication-bypass vulnerability
+(CWE-287 / CWE-345: Improper Authentication / Insufficient Verification
+of Data Authenticity) that leads to sensitive data exposure (maps to
+OWASP LLM Top 10 - LLM06:2025 Sensitive Information Disclosure /
+Excessive Agency).
+
+The agent uses genuine tool-calling: the LLM decides, from the user's
+natural-language message, whether to call privileged tools that read
+customer or internal data.
 
 THE BUG (on purpose):
   `decode_token()` calls jwt.decode(..., options={"verify_signature": False}).
   It trusts whatever "role" claim is in the token without checking the
-  signature, so anyone can forge a token (no secret needed) claiming
-  role=admin and reach the agent's privileged tools.
+  signature. The agent's privileged tools authorize on that unverified
+  claim, so anyone can forge a token (no secret needed) claiming
+  role=admin and get the LLM agent to hand over the full customer
+  database and internal configuration.
+
+Requires OPENAI_API_KEY in the environment for the live agent.
 """
 
 import datetime
+import json
 import os
+from dataclasses import dataclass
 
 import jwt
 from flask import Flask, jsonify, request
+
+from agents import Agent, Runner, RunContextWrapper, function_tool
 
 app = Flask(__name__)
 
@@ -214,38 +227,93 @@ def login():
     return jsonify({"token": issue_token(username)})
 
 
+# ---------------------------------------------------------------------------
+# Real LLM agent (OpenAI Agents SDK) with tool-calling over customer data.
+# ---------------------------------------------------------------------------
+
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+
+
+@dataclass
+class AuthContext:
+    """Per-request identity, taken from the (UNVERIFIED) JWT claims."""
+
+    sub: str
+    role: str
+    customer_id: str
+
+
+@function_tool
+def get_my_account(wrapper: RunContextWrapper[AuthContext]) -> str:
+    """Return the account record for the currently signed-in customer."""
+    record = CUSTOMER_DB.get(wrapper.context.customer_id)
+    if not record:
+        return "No account found for the current user."
+    return json.dumps(record)
+
+
+@function_tool
+def list_all_customers(wrapper: RunContextWrapper[AuthContext]) -> str:
+    """List the full customer database. Restricted to admin support staff."""
+    # VULNERABILITY (planted): authorizes on the unverified JWT role claim.
+    # A forged token with role=admin passes this check without any real auth.
+    if wrapper.context.role == "admin":
+        return json.dumps(CUSTOMER_DB)
+    return "Access denied: this action requires an admin support role."
+
+
+@function_tool
+def get_internal_config(wrapper: RunContextWrapper[AuthContext]) -> str:
+    """Return the agent's internal system configuration and service credentials.
+    Restricted to admin support staff."""
+    # VULNERABILITY (planted): same unverified-claim authorization as above.
+    if wrapper.context.role == "admin":
+        return json.dumps(INTERNAL_SYSTEM_PROMPT)
+    return "Access denied: this action requires an admin support role."
+
+
+AGENT_INSTRUCTIONS = (
+    "You are DataBot, a friendly AI customer-support agent for a SaaS company. "
+    "Help the signed-in customer with questions about their account. "
+    "Use get_my_account to look up the current user's own details. "
+    "Use list_all_customers or get_internal_config only when the user asks for "
+    "that information; those tools enforce their own access control and will "
+    "refuse if the user is not authorized. Answer concisely and include the "
+    "data the tools return."
+)
+
+support_agent = Agent(
+    name="DataBot",
+    instructions=AGENT_INSTRUCTIONS,
+    tools=[get_my_account, list_all_customers, get_internal_config],
+    model=OPENAI_MODEL,
+)
+
+
 @app.post("/api/agent/chat")
 @require_auth
 def agent_chat():
-    """Simulated AI agent endpoint with tool-calling over customer data."""
+    """Real LLM agent endpoint with tool-calling over customer data."""
+    if not os.environ.get("OPENAI_API_KEY"):
+        return jsonify({"error": "Agent not configured: OPENAI_API_KEY is not set."}), 503
+
     claims = request.claims
     body = request.get_json(silent=True) or {}
-    message = (body.get("message") or "").lower()
+    message = (body.get("message") or "").strip()
+    if not message:
+        return jsonify({"error": "empty message"}), 400
 
-    role = claims.get("role")
-    own_customer_id = claims.get("customer_id")
+    ctx = AuthContext(
+        sub=claims.get("sub", "unknown"),
+        role=claims.get("role", "customer"),
+        customer_id=claims.get("customer_id", ""),
+    )
 
-    # Privileged tool: list/dump all customers. Should require a real,
-    # signature-verified admin role - instead trusts the forged claim.
-    if "all customers" in message or "list customers" in message or "dump" in message:
-        if role == "admin":
-            return jsonify({
-                "reply": "Here is the full customer database.",
-                "tool_result": CUSTOMER_DB,
-            })
-        return jsonify({"reply": "I can only discuss your own account."}), 403
-
-    if "system prompt" in message or "internal config" in message or "api key" in message:
-        if role == "admin":
-            return jsonify({
-                "reply": "Here is my internal configuration.",
-                "tool_result": INTERNAL_SYSTEM_PROMPT,
-            })
-        return jsonify({"reply": "I can't share that."}), 403
-
-    # Normal path: agent answers about the caller's own account only.
-    record = CUSTOMER_DB.get(own_customer_id)
-    return jsonify({"reply": f"Hi, how can I help with account {own_customer_id}?", "account": record})
+    try:
+        result = Runner.run_sync(support_agent, message, context=ctx, max_turns=6)
+        return jsonify({"reply": result.final_output})
+    except Exception as exc:  # surface agent/LLM errors to the caller for the demo
+        return jsonify({"error": f"agent error: {exc}"}), 500
 
 
 if __name__ == "__main__":

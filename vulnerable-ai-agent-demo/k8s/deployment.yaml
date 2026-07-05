@@ -29,6 +29,14 @@ spec:
                 secretKeyRef:
                   name: vulnerable-ai-agent-demo-secret
                   key: jwt-secret
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vulnerable-ai-agent-demo-secret
+                  key: openai-api-key
+                  optional: true
+            - name: OPENAI_MODEL
+              value: "gpt-4o-mini"
           readinessProbe:
             httpGet:
               path: /health
