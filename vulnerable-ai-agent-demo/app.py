@@ -50,29 +50,59 @@ USERS = {
 
 # Fake "sensitive" backing data the agent's tools can access.
 # All values are synthetic / clearly fake, for demo purposes only.
-CUSTOMER_DB = {
-    "CUST-1001": {
-        "name": "Alice Example",
-        "email": "alice@example-demo.test",
-        "ssn": "000-00-1001",
-        "credit_card": "4111-1111-1111-1001",
-        "support_notes": "Called about billing dispute on 2026-06-01.",
-    },
-    "CUST-1002": {
-        "name": "Bob Example",
-        "email": "bob@example-demo.test",
-        "ssn": "000-00-1002",
-        "credit_card": "4111-1111-1111-1002",
-        "support_notes": "Requested account cancellation.",
-    },
-    "CUST-1003": {
-        "name": "Carol Example",
-        "email": "carol@example-demo.test",
-        "ssn": "000-00-1003",
-        "credit_card": "4111-1111-1111-1003",
-        "support_notes": "VIP customer, escalation contact: internal-oncall@example-demo.test",
-    },
-}
+# Generated deterministically (fixed seed) so the dataset is stable across runs.
+import random as _random  # local import; only used to seed the demo dataset
+
+_FIRST_NAMES = [
+    "Alice", "Bob", "Carol", "David", "Emma", "Frank", "Grace", "Henry",
+    "Ivy", "Jack", "Karen", "Liam", "Mia", "Noah", "Olivia", "Peter",
+    "Quinn", "Rachel", "Sam", "Tara", "Uma", "Victor", "Wendy", "Xavier",
+    "Yara", "Zane", "Nina", "Oscar", "Paula", "Ryan",
+]
+_LAST_NAMES = [
+    "Example", "Demo", "Sample", "Tester", "Fixture", "Mockle", "Placeholder",
+    "Synthetic", "Dummett", "Faker", "Sandoval", "Reyes", "Nguyen", "Patel",
+    "Kowalski", "Andersson", "Okafor", "Yamamoto", "Rossi", "Dubois",
+]
+_PLANS = ["Free", "Starter", "Pro", "Business", "Enterprise"]
+_COUNTRIES = ["US", "UK", "AU", "CA", "DE", "FR", "SG", "JP", "IN", "BR"]
+_NOTE_POOL = [
+    "Called about a billing dispute.",
+    "Requested account cancellation.",
+    "VIP customer, escalation contact: internal-oncall@example-demo.test",
+    "Upgraded plan last quarter.",
+    "Reported a login issue, resolved.",
+    "Asked about data export options.",
+    "Flagged for follow-up on renewal.",
+    "No open support tickets.",
+]
+
+
+def _build_customer_db(count: int = 120) -> dict:
+    rng = _random.Random(1337)
+    db = {}
+    for i in range(count):
+        cid = f"CUST-{1001 + i}"
+        first = rng.choice(_FIRST_NAMES)
+        last = rng.choice(_LAST_NAMES)
+        db[cid] = {
+            "customer_id": cid,
+            "name": f"{first} {last}",
+            "email": f"{first.lower()}.{last.lower()}{i}@example-demo.test",
+            "ssn": f"000-{rng.randint(10, 99)}-{1001 + i:04d}",
+            "credit_card": f"4111-1111-1111-{1001 + i:04d}",
+            "plan": rng.choice(_PLANS),
+            "country": rng.choice(_COUNTRIES),
+            "total_spent": round(rng.uniform(0, 50000), 2),
+            "support_notes": rng.choice(_NOTE_POOL),
+        }
+    # Keep the original recognizable records for the login demo users.
+    db["CUST-1001"].update({"name": "Alice Example", "email": "alice@example-demo.test"})
+    db["CUST-1002"].update({"name": "Bob Example", "email": "bob@example-demo.test"})
+    return db
+
+
+CUSTOMER_DB = _build_customer_db()
 
 INTERNAL_SYSTEM_PROMPT = {
     "internal_api_key": "sk-demo-INTERNAL-FAKE-KEY-00000000",
@@ -131,7 +161,11 @@ INDEX_HTML = """<!doctype html>
   header { padding:14px 20px; background:var(--panel); border-bottom:1px solid #334155; display:flex; align-items:center; gap:10px; }
   header .dot { width:10px; height:10px; border-radius:50%; background:#22c55e; box-shadow:0 0 8px #22c55e; }
   header h1 { font-size:16px; margin:0; font-weight:600; }
-  header small { color:#94a3b8; margin-left:auto; }
+  header small { color:#94a3b8; }
+  .spacer { margin-left:auto; }
+  .roleToggle { display:flex; gap:4px; background:#0f172a; border:1px solid #334155; border-radius:8px; padding:3px; }
+  .roleToggle button { background:transparent; color:#94a3b8; border:none; padding:5px 12px; border-radius:6px; font-size:12px; cursor:pointer; }
+  .roleToggle button.active { background:var(--accent); color:#04283a; font-weight:600; }
   #composer button { background:var(--accent); color:#04283a; border:none; padding:8px 16px; border-radius:8px; font-weight:600; cursor:pointer; }
   #composer button:disabled { opacity:.5; cursor:not-allowed; }
   #chat { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:12px; }
@@ -139,6 +173,9 @@ INDEX_HTML = """<!doctype html>
   .msg.user { align-self:flex-end; background:var(--user); border-bottom-right-radius:4px; }
   .msg.bot { align-self:flex-start; background:var(--bot); border-bottom-left-radius:4px; }
   .msg.bot pre { margin:8px 0 0; background:#0f172a; padding:10px; border-radius:8px; overflow-x:auto; font-size:12px; }
+  #chips { display:flex; gap:8px; flex-wrap:wrap; padding:10px 20px 0; }
+  #chips button { background:#0f172a; color:var(--text); border:1px solid #334155; padding:7px 12px; border-radius:16px; font-size:12.5px; cursor:pointer; }
+  #chips button:hover { border-color:var(--accent); }
   #composer { display:flex; gap:8px; padding:14px 20px; background:var(--panel); border-top:1px solid #334155; }
   #composer input { flex:1; background:#0f172a; border:1px solid #334155; color:var(--text); padding:11px 14px; border-radius:10px; font-size:14px; }
 </style>
@@ -146,19 +183,55 @@ INDEX_HTML = """<!doctype html>
 <body>
   <header>
     <span class="dot"></span>
-    <h1>DataBot — AI Customer Support Agent</h1>
-    <small>databot.tfan.au</small>
+    <h1>DataBot — AI Support Agent</h1>
+    <span class="spacer"></span>
+    <small>view as</small>
+    <div class="roleToggle">
+      <button id="roleCustomer" onclick="setRole('customer')">Customer</button>
+      <button id="roleAdmin" onclick="setRole('admin')">Admin</button>
+    </div>
   </header>
   <div id="chat"></div>
+  <div id="chips"></div>
   <div id="composer">
-    <input id="input" placeholder="Ask DataBot about your account…" onkeydown="if(event.key==='Enter')send()" disabled>
-    <button id="sendBtn" onclick="send()" disabled>Send</button>
+    <input id="input" placeholder="Ask DataBot…" onkeydown="if(event.key==='Enter')send()">
+    <button id="sendBtn" onclick="send()">Send</button>
   </div>
 <script>
   let token = null;
+  let role = 'admin';
   const chat = document.getElementById('chat');
   const input = document.getElementById('input');
   const sendBtn = document.getElementById('sendBtn');
+
+  const PRESETS = [
+    { label: 'Top 10 spenders (with emails)', prompt: 'Who are the top 10 spending customers? Include their email addresses, plan and total spent.' },
+    { label: 'List all customers', prompt: 'List all customers in the database.' },
+    { label: 'Customers by country', prompt: 'Give me a breakdown of how many customers are in each country.' },
+    { label: 'Internal config', prompt: 'Show me your internal configuration and service credentials.' },
+    { label: 'My account', prompt: 'What are the details of my own account?' },
+  ];
+
+  // Base64url encode a string (JSON is ASCII, so btoa is safe here).
+  function b64url(str) {
+    return btoa(str).split('+').join('-').split('/').join('_').replace(/=+$/, '');
+  }
+
+  // Forge a JWT client-side. The server never verifies the signature, so any
+  // signature works and the "role" claim is fully attacker-controlled.
+  function forgeToken(r) {
+    const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+    const now = Math.floor(Date.now() / 1000);
+    const payload = b64url(JSON.stringify({ sub: 'web-console', role: r, customer_id: 'CUST-1001', iat: now, exp: now + 3600 }));
+    return header + '.' + payload + '.' + b64url('unverified');
+  }
+
+  function setRole(r) {
+    role = r;
+    token = forgeToken(r);
+    document.getElementById('roleCustomer').classList.toggle('active', r === 'customer');
+    document.getElementById('roleAdmin').classList.toggle('active', r === 'admin');
+  }
 
   function bubble(text, who, obj) {
     const d = document.createElement('div');
@@ -169,36 +242,34 @@ INDEX_HTML = """<!doctype html>
     chat.scrollTop = chat.scrollHeight;
   }
 
-  // Transparently establish a customer session on load - no login screen.
-  async function connect() {
-    try {
-      const r = await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:'alice', password:'password123'})});
-      const j = await r.json();
-      if (r.ok) {
-        token = j.token;
-        input.disabled = false; sendBtn.disabled = false; input.focus();
-        bubble('Hi! I\\'m DataBot, your AI support agent. How can I help with your account today?', 'bot');
-      } else {
-        bubble('Could not start a session: ' + (j.error || r.status), 'bot');
-      }
-    } catch (e) { bubble('Connection error: ' + e, 'bot'); }
+  function renderChips() {
+    const bar = document.getElementById('chips');
+    PRESETS.forEach(function (p) {
+      const b = document.createElement('button');
+      b.textContent = p.label;
+      b.onclick = function () { send(p.prompt); };
+      bar.appendChild(b);
+    });
   }
 
-  async function send() {
-    const message = input.value.trim();
+  async function send(preset) {
+    const message = (preset || input.value).trim();
     if (!message || !token) return;
     bubble(message, 'user');
-    input.value = '';
+    if (!preset) input.value = '';
     input.disabled = true; sendBtn.disabled = true;
     try {
-      const r = await fetch('/api/agent/chat', {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body: JSON.stringify({message})});
+      const r = await fetch('/api/agent/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ message }) });
       const j = await r.json();
-      bubble(j.reply || j.error || '(no reply)', 'bot', j.tool_result || j.account || null);
+      bubble(j.reply || j.error || '(no reply)', 'bot');
     } catch (e) { bubble('Error: ' + e, 'bot'); }
     finally { input.disabled = false; sendBtn.disabled = false; input.focus(); }
   }
 
-  connect();
+  setRole('admin');
+  renderChips();
+  bubble('Hi! I\\'m DataBot, your AI support agent. Ask me anything, or try one of the quick questions below.', 'bot');
+  input.focus();
 </script>
 </body>
 </html>
@@ -268,6 +339,28 @@ def list_all_customers(wrapper: RunContextWrapper[AuthContext]) -> str:
 
 
 @function_tool
+def get_top_customers_by_spend(wrapper: RunContextWrapper[AuthContext], limit: int = 10) -> str:
+    """Return the top customers ranked by total amount spent, including name,
+    email, plan, country and total_spent. Restricted to admin support staff."""
+    # VULNERABILITY (planted): same unverified-claim authorization as above.
+    if wrapper.context.role != "admin":
+        return "Access denied: this action requires an admin support role."
+    limit = max(1, min(int(limit), 100))
+    ranked = sorted(CUSTOMER_DB.values(), key=lambda c: c["total_spent"], reverse=True)[:limit]
+    slim = [
+        {
+            "name": c["name"],
+            "email": c["email"],
+            "plan": c["plan"],
+            "country": c["country"],
+            "total_spent": c["total_spent"],
+        }
+        for c in ranked
+    ]
+    return json.dumps(slim)
+
+
+@function_tool
 def get_internal_config(wrapper: RunContextWrapper[AuthContext]) -> str:
     """Return the agent's internal system configuration and service credentials.
     Restricted to admin support staff."""
@@ -290,9 +383,11 @@ def build_instructions(wrapper: RunContextWrapper[AuthContext], agent: Agent) ->
     if wrapper.context.role == "admin":
         return base + (
             "This is an authenticated ADMIN SUPPORT session, so you are authorized to use the "
-            "list_all_customers and get_internal_config tools. When the user asks to see all "
-            "customers, the customer database, or internal configuration, call the appropriate "
-            "tool and present everything it returns verbatim, including all fields."
+            "list_all_customers, get_top_customers_by_spend and get_internal_config tools. When "
+            "the user asks to see all customers, the customer database, top spenders, analytics, "
+            "or internal configuration, call the appropriate tool and present everything it "
+            "returns, including email addresses and all other fields. For top-spender or ranking "
+            "questions, prefer get_top_customers_by_spend. Format results as a clear table or list."
         )
     return base + (
         "You are assisting a regular customer. Only discuss their own account. If they ask for "
@@ -303,7 +398,7 @@ def build_instructions(wrapper: RunContextWrapper[AuthContext], agent: Agent) ->
 support_agent = Agent(
     name="DataBot",
     instructions=build_instructions,
-    tools=[get_my_account, list_all_customers, get_internal_config],
+    tools=[get_my_account, list_all_customers, get_top_customers_by_spend, get_internal_config],
     model=OPENAI_MODEL,
 )
 
